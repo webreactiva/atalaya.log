@@ -1,0 +1,13 @@
+{
+  "name": "atalaya.log",
+  "version": "0.1.0",
+  "description": "A daily logbook of your git repos and local AI agent sessions (Claude Code, Codex, OpenCode, pi), written up by an agent",
+  "keywords": ["changelog", "worklog", "git", "claude-code", "codex", "opencode", "pi", "ai-agents", "telegram"],
+  "license": "MIT",
+  "author": "Daniel Primo",
+  "type": "module",
+  "bin": { "atalaya": "./atalaya.mjs" },
+  "files": ["atalaya.mjs", "lib", "prompts", ".agents/skills/atalaya/SKILL.md", ".agents/skills/atalaya/scripts", "README.md", "LICENSE"],
+  "engines": { "node": ">=24" },
+  "scripts": { "test": "node --test" }
+}

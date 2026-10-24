@@ -1,0 +1,23 @@
+{
+  "skill_name": "atalaya",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want the roast to reach me every night on telegram too, and ~/Sites/valet/sopravolare should show up as /sopravolare in the logs",
+      "expected_output": "Sets \"daily\": true on the roast log, adds the alias, writes no secret into the config, passes check-config, restarts the bot if it is running and warns that it is one more agent call every night.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "what did I do yesterday in yesyak? 4 lines max",
+      "expected_output": "Uses collect + show --project yesyak (does not have an agent write a log) and answers from that data.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "add a weekly log in English for my boss with only ~/Sites/valet/sopravolare, no commit hashes, that I can request from the bot with /boss",
+      "expected_output": "Creates a new prompt in prompts/ with a {language} placeholder, adds the log with project, \"language\": \"English\" and daily:false, adds bot.commands.boss, validates with check-config and tests it with atalaya log --name.",
+      "files": []
+    }
+  ]
+}
