@@ -36,7 +36,7 @@ mkdir -p ~/scripts/atalaya_log && cd ~/scripts/atalaya_log
 atalaya init                       # or: atalaya init ~/scripts/atalaya_log --roots ~/code,~/work
 ```
 
-`init` detects which agents you have, picks one to write the logs and the language from your locale, guesses your code folders, and creates:
+If the folder already has a `config.json` (a clone of your atalaya repo), `init` keeps it and sets up everything else. `init` detects which agents you have, picks one to write the logs and the language from your locale, guesses your code folders, and creates:
 
 ```
 ~/scripts/atalaya_log/
@@ -44,6 +44,7 @@ atalaya init                       # or: atalaya init ~/scripts/atalaya_log --ro
 ├── .env            # secrets for Telegram, email… (chmod 600, git-ignored)
 ├── prompts/        # one prompt per log; edit them freely
 ├── logs/           # the logs, one folder per log: logs/daily/2026-10-23.md
+├── activity/       # each machine's recorded day, to share it (see Several machines)
 ├── .gitignore      # always written (or completed): .env, atalaya.db*, workdir/, *.log
 ├── .git/           # the folder is its own repo, with a pre-commit secrets guard
 └── atalaya.db      # the store (created on the first collect)
@@ -221,7 +222,7 @@ Your atalaya folder is already a repo (see [Install](#install)): config, prompts
 1. Create an empty private repo on GitHub/GitLab, then:
    ```bash
    cd ~/scripts/atalaya_log
-   git add .gitignore config.json prompts logs && git commit -m "First logs"
+   git add .gitignore config.json prompts logs activity && git commit -m "First logs"
    git remote add origin git@github.com:you/my-logs.git
    git push -u origin HEAD
    ```
@@ -229,11 +230,41 @@ Your atalaya folder is already a repo (see [Install](#install)): config, prompts
 3. Add the command to `after`:
    ```json
    "after": [
-     "git add config.json prompts logs && (git diff --cached --quiet || git commit -qm \"log $ATALAYA_DATE\") && git push -q"
+     "git add config.json prompts logs activity && (git diff --cached --quiet || git commit -qm \"log $ATALAYA_DATE ($ATALAYA_MACHINE)\") && git pull -q --rebase && git push -q"
    ]
    ```
 
 You can combine all three: put them in `after` in the order you want them to run.
+
+### Several machines
+
+One logbook can cover several computers. Each one runs atalaya with the same atalaya repo, and the logs tell what happened on each.
+
+- **Every machine has a label**: `ATALAYA_MACHINE` in its own `.env` (`init` writes the host name; change it before the first `daily`). `atalaya paths` shows it.
+- **`daily` shares the day**: after `collect` it exports this machine's day to `activity/<label>/<day>.json` and imports the files the other machines pushed. Exports are redacted and byte-stable, so an unchanged day makes no git diff; folders in `hide` are never exported; imports are redacted again.
+- **Nothing is counted twice**: a commit is stored by hash, so a repo cloned on two machines lists it once; sessions are keyed by agent, id and day.
+- **The logs say where**: when a day has activity from more than one machine, each project is titled `## /lab/api · office` and the agent sees `Machines: laptop, office`. With one machine the output is unchanged.
+
+Setup, using the git push above on every machine:
+
+1. On the new machine, install atalaya and clone your atalaya repo, then run `init` inside the clone. It keeps the `config.json` it finds and sets up the rest: `.env` with this machine's label, the pre-commit guard, the pointer, the cron line.
+   ```bash
+   git clone git@github.com:you/my-logs.git ~/scripts/atalaya_log && cd ~/scripts/atalaya_log
+   atalaya init      # then edit ATALAYA_MACHINE in .env if you want another label
+   ```
+2. Pull before reading, so the other machines' files are there:
+   ```json
+   "before": ["git pull -q --rebase"]
+   ```
+3. What differs per machine goes in `machines.<label>`, merged over the rest of the config (`git` and `agents` key by key). A machine that only feeds the logbook writes no logs:
+   ```json
+   "machines": {
+     "office": { "git": { "roots": ["~/work"] }, "logs": [] }
+   }
+   ```
+4. Schedule the machines that only feed it before the one that writes, e.g. `00:05` and `00:30`.
+
+A machine that is off at night simply shares that day on its next `daily` run; the day already written does not include it unless you run `atalaya daily --date <day>` again.
 
 ## Commands
 
@@ -242,7 +273,8 @@ atalaya collect [--since 24h | --date YYYY-MM-DD] [--fetch]   # read git + sessi
 atalaya show [--date today | --since 7d] [--project text]     # print stored data as Markdown
 atalaya discover [agent ...] [--no-tmux]                      # ask agents where their sessions live
 atalaya log [--date today] [--name log]                       # an agent writes the configured logs
-atalaya daily [--date today] [--no-after]                     # collect + log + after
+atalaya daily [--date today] [--no-after]                     # before + collect + share + log + after
+atalaya share [--date today]                                  # export this machine's day, import the others'
 atalaya report "what got finished" [--source agent]           # an agent records finished work
 atalaya bot                                                   # Telegram bot: /tldr, /roast_me… [today|yesterday|YYYY-MM-DD]
 atalaya paths                                                 # where each source is read from
@@ -269,7 +301,9 @@ atalaya guard                                                 # pre-commit check
 | `agents.<name>.interactive` | Command started in tmux when headless fails |
 | `agents.<name>.path` | Fixed location of the agent's sessions (overrides `discover`) |
 | `logs` | `[{ "name", "agent", "prompt", "project"?, "daily"?, "language"? }]`. `project` limits a log to folders containing that text. `"daily": false` skips it in `daily`; it is only written on demand (`atalaya log --name`, the bot) |
+| `before` | Shell commands run at the start of `daily`, in order (e.g. `git pull`) |
 | `after` | Shell commands run after `daily`, in order |
+| `machines.<label>` | Overrides for one machine, merged over the rest (`git` and `agents` key by key). See [Several machines](#several-machines) |
 | `bot.commands` | Telegram command → log name, for `atalaya bot` |
 | `redact` | Extra regular expressions to scrub from everything |
 | `aliases` | Display names for path prefixes, e.g. `{ "~/Sites/lab": "/lab" }`. The longest match wins |
@@ -331,6 +365,7 @@ Loaded from the atalaya folder on every run. None are required for the basic log
 
 | Variable | Used by |
 |---|---|
+| `ATALAYA_MACHINE` | This computer's label (default: its host name). See [Several machines](#several-machines) |
 | `TELEGRAM_BOT_TOKEN` | Telegram, from @BotFather |
 | `TELEGRAM_CHAT_ID` | Telegram, from `getUpdates` |
 | `SMTP_URL` | Email, e.g. `smtps://smtp.gmail.com:465` or `smtp://sandbox.smtp.mailtrap.io:2525` |

@@ -33,6 +33,10 @@ for (const r of cfg.git.roots) if (!existsSync(r)) warnings.push(`git.roots: ${r
 if (!['local', 'remote', 'all'].includes(cfg.git.refs)) errors.push(`git.refs: "${cfg.git.refs}" (use local, remote or all)`);
 for (const s of cfg.sources) if (!READERS[s]) errors.push(`sources: no reader for "${s}" (available: ${Object.keys(READERS).join(', ')})`);
 if (typeof cfg.language !== 'string' || !cfg.language.trim()) errors.push('language: must be a language name, e.g. "English" or "Spanish"');
+for (const label of Object.keys(JSON.parse(readFileSync(file, 'utf8')).machines ?? {})) {
+  if (!/^[a-z0-9_-]+$/.test(label)) errors.push(`machines: "${label}" is not a valid label (a-z, 0-9, - and _); it must match ATALAYA_MACHINE`);
+}
+for (const key of ['before', 'after']) if (!Array.isArray(cfg[key])) errors.push(`${key}: must be a list of shell commands`);
 
 const names = new Set();
 for (const log of cfg.logs) {
@@ -63,4 +67,4 @@ if (redact(raw, cfg.redact) !== raw) errors.push('there seems to be a secret wri
 for (const w of new Set(warnings)) console.log(`⚠ ${w}`);
 for (const e of errors) console.log(`✗ ${e}`);
 if (errors.length) process.exit(1);
-console.log(`✓ ${file}: ${cfg.sources.length} sources, ${cfg.logs.length} logs (${[...daily].length} in daily), ${cfg.after.length} after commands, language ${cfg.language}`);
+console.log(`✓ ${file} (machine ${cfg.machine}): ${cfg.sources.length} sources, ${cfg.logs.length} logs (${[...daily].length} in daily), ${cfg.after.length} after commands, language ${cfg.language}`);

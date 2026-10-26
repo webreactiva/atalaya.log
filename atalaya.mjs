@@ -6,7 +6,7 @@ process.removeAllListeners('warning'); // node:sqlite prints an experimental war
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { homedir } from 'node:os';
 import { expand, findHome, loadConfig, POINTER, promptPath } from './lib/config.mjs';
@@ -25,7 +25,8 @@ const HELP = `atalaya <command> [options]
   collect   [--since 24h | --date YYYY-MM-DD] [--fetch]  Read git and agent sessions into the store
   show      [--date today | --since 7d] [--project txt]  Print what is stored, as Markdown (what the agent receives)
   log       [--date today] [--name log]                  An agent writes the logs configured in "logs"
-  daily     [--date today] [--no-after]                  collect + log + the "after" commands
+  daily     [--date today] [--no-after]                  before + collect + share + log + after
+  share     [--date today]                               Export this machine's day to activity/ and import the others'
   report    "what got finished" [--source agent]         For agents: record finished work in the current folder
   bot                                                    Telegram bot: /daily, /tldr… [today|yesterday|YYYY-MM-DD]
   discover  [agent ...] [--no-tmux]                      Ask each agent where it stores its sessions
@@ -99,6 +100,26 @@ function exportDays(cfg, store, range, project) {
     .join('\n');
 }
 
+// ---------- several machines ----------
+// Each machine exports its day to activity/<label>/<day>.json (synced by git through "before"/"after")
+// and imports the other machines' files, so the logs cover every computer
+async function share(cfg, store, day) {
+  const dir = join(cfg.dataDir, 'activity');
+  const mine = store.exportDay(day, cfg.view.hide);
+  if (mine) {
+    await mkdir(join(dir, cfg.machine), { recursive: true });
+    await writeFile(join(dir, cfg.machine, `${day}.json`), JSON.stringify(mine, null, 1) + '\n');
+  }
+  const others = [];
+  for (const machine of await readdir(dir).catch(() => [])) {
+    const file = join(dir, machine, `${day}.json`);
+    if (machine === cfg.machine || !existsSync(file)) continue;
+    store.importDay(machine, JSON.parse(await readFile(file, 'utf8')), (t) => redact(t, cfg.redact));
+    others.push(machine);
+  }
+  console.error(`share: ${mine ? `exported ${cfg.machine}` : `nothing to export from ${cfg.machine}`}${others.length ? `, imported ${others.join(', ')}` : ''}`);
+}
+
 // ---------- logs written by an agent ----------
 async function writeLogs(cfg, store, day, only) {
   // logs with "daily": false are only written on demand (atalaya log --name, the bot)
@@ -124,11 +145,12 @@ async function writeLogs(cfg, store, day, only) {
   return written;
 }
 
-async function runAfter(cfg, env) {
-  for (const cmd of cfg.after) {
-    console.error(`after: ${cmd}`);
+// "before" or "after" commands, run in the atalaya folder
+async function runCommands(cfg, when, env) {
+  for (const cmd of cfg[when]) {
+    console.error(`${when}: ${cmd}`);
     const code = await new Promise((res) => spawn('sh', ['-c', cmd], { stdio: 'inherit', cwd: cfg.dataDir, env: { ...process.env, ...env } }).on('close', res));
-    if (code !== 0) throw new Error(`after: "${cmd}" exited with code ${code}`);
+    if (code !== 0) throw new Error(`${when}: "${cmd}" exited with code ${code}`);
   }
 }
 
@@ -146,6 +168,7 @@ async function logFor(cfg, store, name, date, onGenerate) {
   if (existsSync(file) && range.date !== localDate(Date.now())) return file;
   await onGenerate(range.date);
   await collect(cfg, store, range, {});
+  await share(cfg, store, range.date);
   return (await writeLogs(cfg, store, range.date, name))[0].file;
 }
 
@@ -178,10 +201,11 @@ async function runBot(cfg, store) {
 function runInit(dir, values) {
   const r = init(dir, { roots: values.roots?.split(',').map((x) => x.trim()), force: values.force });
   const tilde = (p) => p.replace(homedir(), '~');
-  console.log(`✓ ${tilde(r.config)}`);
-  console.log(`  repos in: ${r.cfg.git.roots.join(', ') || '(no folder detected: fill in git.roots)'}`);
+  console.log(`✓ ${tilde(r.config)}${r.kept ? ' (existing, kept; --force to start over)' : ''}`);
+  console.log(`  machine: ${r.machine} (ATALAYA_MACHINE in .env)`);
+  console.log(`  repos in: ${r.cfg.git?.roots?.join(', ') || '(no folder detected: fill in git.roots)'}`);
   for (const a of r.agents) console.log(`  ${a.name.padEnd(9)} ${a.bin ? 'installed' : '—'}${a.sessions ? ', sessions found' : ''}`);
-  console.log(r.writer ? `  logs written by: ${r.writer.name}, in ${r.cfg.language}` : '  ⚠ no agent installed to write the logs (claude, codex, opencode or pi)');
+  console.log(r.writer ? `  logs written by: ${r.writer.name}, in ${r.cfg.language ?? 'English'}` : '  ⚠ no agent installed to write the logs (claude, codex, opencode or pi)');
   console.log(`  git: ${r.git}`);
   console.log(`
 Next steps:
@@ -207,10 +231,12 @@ async function main() {
 
   const home = findHome(values.home);
   if (!home && !values.config) throw new Error('No atalaya folder found. Run "atalaya init" in the folder where you want your logs');
-  const cfg = await loadConfig(values.config ? expand(values.config) : join(home, 'config.json'));
-  // Secrets for "after" and the bot (Telegram, SMTP…), never in the config; variables already in the environment win
-  if (existsSync(join(cfg.home, '.env'))) process.loadEnvFile(join(cfg.home, '.env'));
-  const store = await openStore(join(cfg.dataDir, 'atalaya.db'));
+  const configPath = values.config ? expand(values.config) : join(home, 'config.json');
+  // Secrets for "after" and the bot (Telegram, SMTP…) and ATALAYA_MACHINE, never in the config; the environment wins.
+  // Loaded first: the machine label picks this computer's section of the config
+  if (existsSync(join(dirname(configPath), '.env'))) process.loadEnvFile(join(dirname(configPath), '.env'));
+  const cfg = await loadConfig(configPath);
+  const store = await openStore(join(cfg.dataDir, 'atalaya.db'), cfg.machine);
   try {
     switch (command) {
       case 'collect':
@@ -222,11 +248,12 @@ async function main() {
         if (!summary) throw new Error('Usage: atalaya report "what got finished and how it ended" [--source claude]');
         const at = new Date().toISOString();
         const id = store.saveReport({ at, project: process.cwd(), source: values.source ?? 'manual', summary }, (t) => redact(t, cfg.redact));
-        return console.log(JSON.stringify({ id, at, project: process.cwd() }));
+        return console.log(JSON.stringify({ id, at, project: process.cwd(), machine: cfg.machine }));
       }
       case 'bot':
         return await runBot(cfg, store);
       case 'paths':
+        console.log(`machine    ${cfg.machine}`);
         for (const name of cfg.sources) {
           const { path, origin } = sourcePath(cfg, store, name);
           console.log(`${name.padEnd(10)} ${existsSync(path) ? '✓' : '✗'} ${path} (${origin})`);
@@ -247,13 +274,18 @@ async function main() {
         const { date } = dayRange(values.date ?? 'today');
         return void (await writeLogs(cfg, store, date, values.name));
       }
+      case 'share':
+        return await share(cfg, store, dayRange(values.date ?? 'today').date);
       case 'daily': {
         const range = dayRange(values.date ?? 'today');
+        const env = { ATALAYA_DATE: range.date, ATALAYA_DATA_DIR: cfg.dataDir, ATALAYA_MACHINE: cfg.machine };
+        await runCommands(cfg, 'before', env); // e.g. git pull, to get the other machines' activity
         await collect(cfg, store, range, values);
+        await share(cfg, store, range.date);
         const logs = cfg.logs.length ? await writeLogs(cfg, store, range.date) : [];
         // ATALAYA_LOGS in config order, and ATALAYA_LOG_<NAME> to pick one (e.g. the tldr as a text message)
         const byName = Object.fromEntries(logs.map((l) => [`ATALAYA_LOG_${l.name.toUpperCase().replace(/\W/g, '_')}`, l.file]));
-        if (!values['no-after']) await runAfter(cfg, { ATALAYA_DATE: range.date, ATALAYA_DATA_DIR: cfg.dataDir, ATALAYA_LOGS: logs.map((l) => l.file).join('\n'), ...byName });
+        if (!values['no-after']) await runCommands(cfg, 'after', { ...env, ATALAYA_LOGS: logs.map((l) => l.file).join('\n'), ...byName });
         return;
       }
       default:

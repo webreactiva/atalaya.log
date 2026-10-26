@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { redact } from '../lib/redact.mjs';
@@ -130,6 +130,38 @@ test('the store is idempotent, dedupes clones and redacts', async () => {
   store.close();
 });
 
+test('machines export their day and import the others, without duplicates', async () => {
+  const day = '2026-10-20';
+  const commit = { hash: 'a'.repeat(40), short: 'aaaaaaa', date: '2026-10-20T10:00:00+02:00', author: 'Daniel', ref: 'main', subject: 'feat: shared', files: 1, insertions: 1, deletions: 0 };
+  const session = (id) => ({ tool: 'claude', id, day, project: '/r/a', title: id, model: 'm', start: '2026-10-20T08:00:00.000Z', end: '2026-10-20T08:30:00.000Z', toolCalls: 1, prompts: ['hi'], files: [] });
+  const laptop = await openStore(':memory:', 'laptop');
+  const office = await openStore(':memory:', 'office');
+  for (const [store, id] of [[laptop, 'from-laptop'], [office, 'from-office']]) {
+    store.saveGit({ repos: ['/r/a'], projects: [{ repo: '/r/a', branch: 'main', commits: [commit], pending: [] }] }, { from: 0, to: 0 }, redact);
+    store.saveSessions([session(id)], redact);
+  }
+  office.saveReport({ at: '2026-10-20T09:00:00.000Z', project: '/r/a', source: 'claude', summary: 'done, key ghp_1234567890abcdefghijABCDEFGHIJ' }, (t) => t); // a secret left in by the other side
+
+  const exported = office.exportDay(day);
+  assert.equal(JSON.stringify(office.exportDay(day)), JSON.stringify(exported)); // same bytes every time
+  assert.equal(office.exportDay('2026-10-21'), null);
+  assert.equal(office.exportDay(day, ['/r']), null); // hidden folders never leave the machine
+  laptop.importDay('office', JSON.parse(JSON.stringify(exported)), redact);
+  laptop.importDay('office', JSON.parse(JSON.stringify(exported)), redact);
+
+  const md = toMarkdown(day, laptop.day(day));
+  assert.match(md, /^Machines: laptop, office$/m);
+  assert.match(md, /^## \/r\/a · laptop$/m);
+  assert.match(md, /^## \/r\/a · office$/m);
+  assert.equal(md.match(/`aaaaaaa`/g).length, 1); // the same commit on two machines is listed once
+  assert.equal(md.match(/Session: `from-office`/g).length, 1); // imported twice, stored once
+  assert.doesNotMatch(md, /ghp_/); // imported files are redacted again
+  assert.deepEqual(laptop.exportDay(day).commits.map((c) => c.short), ['aaaaaaa']); // importing didn't take its own commit away
+  assert.doesNotMatch(toMarkdown(day, office.day(day)), /Machines:/); // a single machine looks as before
+  laptop.close();
+  office.close();
+});
+
 test('Telegram bot commands', () => {
   assert.deepEqual(parseCommand('/roast_me@jarvis_bot 2026-10-20'), { command: 'roast_me', arg: '2026-10-20' });
   assert.deepEqual(parseCommand('/TLDR'), { command: 'tldr', arg: '' });
@@ -153,7 +185,12 @@ test('init creates the folder, completes an existing .gitignore and records the 
   assert.equal(r.cfg.language, 'Spanish');
   assert.equal(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).language, 'English');
   assert.ok(existsSync(join(dir, 'prompts', 'tldr.md')));
-  assert.throws(() => init(dir, { pointer, git: false }), /already exists/);
+  assert.match(readFileSync(join(dir, '.env'), 'utf8'), /^ATALAYA_MACHINE=[a-z0-9_-]+$/m);
+  writeFileSync(join(dir, 'config.json'), '{"language":"French"}\n'); // a clone of the atalaya repo
+  rmSync(join(dir, '.env'));
+  assert.equal(init(dir, { pointer, git: false }).kept, true);
+  assert.equal(readFileSync(join(dir, 'config.json'), 'utf8'), '{"language":"French"}\n');
+  assert.ok(existsSync(join(dir, '.env')));
 
   const old = process.env.ATALAYA_HOME;
   process.env.ATALAYA_HOME = dir;

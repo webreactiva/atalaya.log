@@ -20,6 +20,7 @@ Everything the user owns lives in **their atalaya folder**, created by `atalaya 
 | `.env` | Secrets for `after` commands and the bot | Never print its values, never copy them elsewhere |
 | `prompts/*.md` | One prompt per log. `{date}` is replaced; the data is appended after `---`. Looked up here first, then in the package | Plain Markdown instructions |
 | `logs/<name>/<date>.md` | Generated logs | Regenerate rather than hand-edit |
+| `activity/<machine>/<date>.json` | Each machine's recorded day, exported by `daily`/`share` | Generated; commit it, never edit it |
 | `atalaya.db` | The store | Read-only for you; never delete it, it is the only copy of pruned history |
 
 The full key reference is in the package's `README.md` ("Configuration reference", "Full example", "`.env` variables"), two folders up from this skill. Read it when you need a key not covered here instead of guessing. If there is no atalaya folder yet, run `atalaya init` where the user wants their logs and read what it prints back to them.
@@ -50,11 +51,13 @@ Keep the config's compact style (one line per agent, per log, per `after` comman
 
 **Agents.** `agents.<name>.headless` is the command used for logs (`{prompt}` marks the slot). Sources need no agent: `claude`, `codex`, `opencode` and `pi` are read straight from disk. If `atalaya paths` shows ✗, try `atalaya discover <name>`, else set `agents.<name>.path`. A headless failure like 401 or "no credits" is the user's login or billing; say so instead of retrying.
 
-**After commands** (Telegram, email, git push). They run in the atalaya folder with `ATALAYA_DATE`, `ATALAYA_DATA_DIR`, `ATALAYA_LOGS` (one path per line) and `ATALAYA_LOG_<NAME>`; the first failure stops the rest. Copy the tested commands from README "Extras" rather than writing new ones. Secrets go in `.env` as variables (`$TELEGRAM_BOT_TOKEN`), never inline. These commands send data off the machine: confirm with the user before the first real run, and test with `atalaya daily --date yesterday` once they agree.
+**After commands** (Telegram, email, git push). They run in the atalaya folder with `ATALAYA_DATE`, `ATALAYA_DATA_DIR`, `ATALAYA_MACHINE`, `ATALAYA_LOGS` (one path per line) and `ATALAYA_LOG_<NAME>`; the first failure stops the rest. Copy the tested commands from README "Extras" rather than writing new ones. Secrets go in `.env` as variables (`$TELEGRAM_BOT_TOKEN`), never inline. These commands send data off the machine: confirm with the user before the first real run, and test with `atalaya daily --date yesterday` once they agree.
 
 **Telegram bot.** `atalaya bot` answers only `TELEGRAM_CHAT_ID`. `bot.commands` maps command → log name; Telegram allows only `a-z`, `0-9`, `_` (so `/roast_me`, not `/roast-me`). A missing day is generated on the spot; today is always regenerated.
 
-**Git.** The atalaya folder is its own repo with a `pre-commit` hook running `atalaya guard`, which refuses `.env`, `atalaya.db*` and any staged file holding a secret. Never bypass it with `--no-verify` on your own; if it blocks, show the user what it found. Stage explicit paths (`git add config.json prompts logs`), not `-A`.
+**Git.** The atalaya folder is its own repo with a `pre-commit` hook running `atalaya guard`, which refuses `.env`, `atalaya.db*` and any staged file holding a secret. Never bypass it with `--no-verify` on your own; if it blocks, show the user what it found. Stage explicit paths (`git add config.json prompts logs activity`), not `-A`.
+
+**Several machines.** Each computer has a label, `ATALAYA_MACHINE` in its `.env` (`atalaya paths` prints it). `daily` exports this machine's day to `activity/<label>/<day>.json` and imports the other machines' files, so they must share the atalaya repo: `"before": ["git pull -q --rebase"]` and the git push `after` command (with `activity`) on every machine. Per-machine differences go in `machines.<label>` (merged over the config; `git` and `agents` key by key); a machine that only feeds the logbook gets `"logs": []`. A new machine: clone the repo and run `atalaya init` inside it, which keeps `config.json`. Renaming a label leaves old rows under the old name, so choose it before the first `daily`.
 
 **Agent reports.** `atalaya report "<what got finished>" --source <agent>` stores one line tied to the current folder. If the user wants agents to report on their own, propose the snippet from README "Agent reports" for their global `CLAUDE.md`/`AGENTS.md`; that file is theirs, so ask before editing it.
 
