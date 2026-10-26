@@ -230,7 +230,7 @@ Your atalaya folder is already a repo (see [Install](#install)): config, prompts
 3. Add the command to `after`:
    ```json
    "after": [
-     "git add config.json prompts logs activity && (git diff --cached --quiet || git commit -qm \"log $ATALAYA_DATE ($ATALAYA_MACHINE)\") && git pull -q --rebase && git push -q"
+     "git add config.json prompts logs activity && (git diff --cached --quiet || git commit -qm \"log $ATALAYA_DATE ($ATALAYA_MACHINE)\") && git pull -q --rebase --autostash && git push -q"
    ]
    ```
 
@@ -254,7 +254,7 @@ Setup, using the git push above on every machine:
    ```
 2. Pull before reading, so the other machines' files are there:
    ```json
-   "before": ["git pull -q --rebase"]
+   "before": ["git pull -q --rebase --autostash"]
    ```
 3. What differs per machine goes in `machines.<label>`, merged over the rest of the config (`git` and `agents` key by key). A machine that only feeds the logbook writes no logs:
    ```json
