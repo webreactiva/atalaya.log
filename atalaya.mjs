@@ -14,7 +14,7 @@ import { guard, init, installSkill } from './lib/init.mjs';
 import { collectGit } from './lib/git.mjs';
 import { READERS, DEFAULT_PATHS } from './lib/sessions.mjs';
 import { askHeadless, discover, isOwnSession, MARKER } from './lib/agents.mjs';
-import { openStore, toMarkdown } from './lib/store.mjs';
+import { openStore, toMarkdown, toStaleMarkdown } from './lib/store.mjs';
 import { redact } from './lib/redact.mjs';
 import { parseCommand, telegram } from './lib/telegram.mjs';
 import { dayRange, localDate, parseSince } from './lib/time.mjs';
@@ -27,6 +27,7 @@ const HELP = `atalaya <command> [options]
   log       [--date today] [--name log]                  An agent writes the logs configured in "logs"
   daily     [--date today] [--no-after]                  before + collect + share + log + after
   share     [--date today]                               Export this machine's day to activity/ and import the others'
+  stale     [--idle 30d] [--window 90d] [--no-collect]   Projects active in the window but untouched lately
   report    "what got finished" [--source agent]         For agents: record finished work in the current folder
   bot                                                    Telegram bot: /daily, /tldr… [today|yesterday|YYYY-MM-DD]
   discover  [agent ...] [--no-tmux]                      Ask each agent where it stores its sessions
@@ -49,6 +50,9 @@ const opts = {
   fetch: { type: 'boolean' },
   'no-tmux': { type: 'boolean' },
   'no-after': { type: 'boolean' },
+  'no-collect': { type: 'boolean' },
+  idle: { type: 'string' },
+  window: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 };
 
@@ -273,6 +277,17 @@ async function main() {
       case 'log': {
         const { date } = dayRange(values.date ?? 'today');
         return void (await writeLogs(cfg, store, date, values.name));
+      }
+      case 'stale': {
+        const idle = values.idle ?? cfg.stale.idle;
+        const window = values.window ?? cfg.stale.window;
+        const now = Date.now();
+        const from = parseSince(window, now);
+        const idleFrom = parseSince(idle, now);
+        if (idleFrom <= from) throw new Error(`stale: idle (${idle}) must be shorter than window (${window})`);
+        if (!values['no-collect']) await collect(cfg, store, { from, to: now }, values); // the whole window, so no project looks stale for lack of data
+        const today = localDate(now);
+        return console.log(toStaleMarkdown(store.activitySince(localDate(from)), { today, idleSince: localDate(idleFrom), idle, window }, cfg.view));
       }
       case 'share':
         return await share(cfg, store, dayRange(values.date ?? 'today').date);

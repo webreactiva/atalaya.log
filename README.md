@@ -93,7 +93,7 @@ PATH=/Users/you/.nvm/versions/node/v24.11.0/bin:/Users/you/.local/bin:/usr/local
 
 Check `cron.log` the next morning. On macOS, an agent that keeps its login in the Keychain may fail under cron; if so, run it from a `launchd` agent instead.
 
-**6. Optional: let your agents manage it.** `atalaya skill install` links the bundled skill into `~/.claude/skills` and `~/.agents/skills`. Then you can ask your agent things like "add ~/work/api to atalaya", "send me the roast every night" or "what did I do yesterday in yesyak?".
+**6. Optional: let your agents manage it.** `atalaya skill install` links the bundled skills (`atalaya`, and `atalaya-stale` for dead projects) into `~/.claude/skills` and `~/.agents/skills`. Then you can ask your agent things like "add ~/work/api to atalaya", "send me the roast every night" or "what did I do yesterday in yesyak?".
 
 ## Logs
 
@@ -277,6 +277,7 @@ atalaya discover [agent ...] [--no-tmux]                      # ask agents where
 atalaya log [--date today] [--name log]                       # an agent writes the configured logs
 atalaya daily [--date today] [--no-after]                     # before + collect + share + log + after
 atalaya share [--date today]                                  # export this machine's day, import the others'
+atalaya stale [--idle 30d] [--window 90d] [--no-collect]      # projects active in the window but untouched lately
 atalaya report "what got finished" [--source agent]           # an agent records finished work
 atalaya bot                                                   # Telegram bot: /tldr, /roast_me… [today|yesterday|YYYY-MM-DD]
 atalaya paths                                                 # where each source is read from
@@ -303,6 +304,7 @@ atalaya guard                                                 # pre-commit check
 | `agents.<name>.interactive` | Command started in tmux when headless fails |
 | `agents.<name>.path` | Fixed location of the agent's sessions (overrides `discover`) |
 | `logs` | `[{ "name", "agent", "prompt", "project"?, "daily"?, "language"? }]`. `project` limits a log to folders containing that text. `"daily": false` skips it in `daily`; it is only written on demand (`atalaya log --name`, the bot) |
+| `stale.idle`, `stale.window` | Thresholds for `atalaya stale`: untouched for `idle`, active within `window`. Default `30d` and `90d` |
 | `before` | Shell commands run at the start of `daily`, in order (e.g. `git pull`) |
 | `after` | Shell commands run after `daily`, in order |
 | `machines.<label>` | Overrides for one machine, merged over the rest (`git` and `agents` key by key). See [Several machines](#several-machines) |
@@ -388,6 +390,24 @@ Variables already set in the environment win over `.env`.
 All of them are written in English and ask the agent to answer in `{language}`. Only the changelog cites commit hashes; the TL;DR, the roast and bro don't.
 
 The suggested-improvements section asks the agent for 2 to 4 concrete proposals backed by the data: repeated tasks worth automating, commits to squash or split, long-standing uncommitted work, long sessions with no outcome, prompts that could become a skill or a script. Delete those lines from the prompt if you don't want them.
+
+## Stale projects
+
+`atalaya stale` lists the projects that had activity in the last `window` (default 90 days) but none for `idle` (default 30 days): no commits, no agent sessions, no reports, on any machine. Oldest first:
+
+```
+| Project | Last activity | Idle | Commits | Agent session-days |
+|---|---|---|---|---|
+| /lab/widgetron | 2026-09-05 | 52 days | 16 | 1 |
+```
+
+```bash
+atalaya stale                          # thresholds from config.json
+atalaya stale --idle 60d --window 180d
+atalaya stale --no-collect             # skip the collect over the whole window (about 40 s with 190 repos)
+```
+
+Set the defaults with `"stale": { "idle": "30d", "window": "90d" }`. Projects with nothing in the whole window are not listed (they were dead before it started; widen `window`), and temp folders and `hide` are left out. The `atalaya-stale` skill (installed with `atalaya skill install`) lets an agent run it, look into each project and propose what to archive, close or pick back up.
 
 ## Estimated time per project
 

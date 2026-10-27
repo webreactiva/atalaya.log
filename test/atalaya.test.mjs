@@ -11,7 +11,7 @@ import { parseSince, dayRange, activeTime, duration } from '../lib/time.mjs';
 import { parseLog } from '../lib/git.mjs';
 import { patchFiles, READERS } from '../lib/sessions.mjs';
 import { existingPath, isOwnSession, discoverPrompt } from '../lib/agents.mjs';
-import { openStore, toMarkdown } from '../lib/store.mjs';
+import { openStore, toMarkdown, toStaleMarkdown } from '../lib/store.mjs';
 import { parseCommand, chunks } from '../lib/telegram.mjs';
 import { findHome, promptPath } from '../lib/config.mjs';
 import { guard, init } from '../lib/init.mjs';
@@ -160,6 +160,24 @@ test('machines export their day and import the others, without duplicates', asyn
   assert.doesNotMatch(toMarkdown(day, office.day(day)), /Machines:/); // a single machine looks as before
   laptop.close();
   office.close();
+});
+
+test('stale lists projects active in the window but idle lately', async () => {
+  const store = await openStore(':memory:', 'laptop');
+  const commit = (hash, date) => ({ hash: hash.repeat(40), short: hash.repeat(7), date, author: 'D', ref: 'main', subject: 's', files: 1, insertions: 1, deletions: 0 });
+  store.saveGit({ repos: ['/r/old', '/r/live'], projects: [
+    { repo: '/r/old', branch: 'main', commits: [commit('a', '2026-08-01T10:00:00Z'), commit('b', '2026-08-03T10:00:00Z')], pending: [] },
+    { repo: '/r/live', branch: 'main', commits: [commit('c', '2026-08-01T10:00:00Z')], pending: [] },
+  ] }, { from: 0, to: 0 }, redact);
+  store.saveSessions([{ tool: 'claude', id: 's', day: '2026-10-20', project: '/r/live/sub', title: 't', model: 'm', start: '2026-10-20T08:00:00Z', end: '2026-10-20T09:00:00Z', toolCalls: 1, prompts: [], files: [] }], redact);
+  const projects = store.activitySince('2026-07-29');
+  assert.deepEqual(projects.map((p) => [p.project, p.last, p.commits, p.sessions]), [['/r/old', '2026-08-03', 2, 0], ['/r/live', '2026-10-20', 1, 1]]);
+  const md = toStaleMarkdown(projects, { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' });
+  assert.match(md, /1 of 2 projects/);
+  assert.match(md, /^\| \/r\/old \| 2026-08-03 \| 85 days \| 2 \| 0 \|$/m);
+  assert.doesNotMatch(md, /\/r\/live/); // its agent session in a subfolder keeps it alive
+  assert.match(toStaleMarkdown(projects, { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' }, { hide: ['/r/old'] }), /Nothing stale/);
+  store.close();
 });
 
 test('Telegram bot commands', () => {

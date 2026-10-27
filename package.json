@@ -7,7 +7,7 @@
   "author": "Daniel Primo",
   "type": "module",
   "bin": { "atalaya": "./atalaya.mjs" },
-  "files": ["atalaya.mjs", "lib", "prompts", ".agents/skills/atalaya/SKILL.md", ".agents/skills/atalaya/scripts", "README.md", "LICENSE"],
+  "files": ["atalaya.mjs", "lib", "prompts", ".agents/skills/atalaya/SKILL.md", ".agents/skills/atalaya/scripts", ".agents/skills/atalaya-stale/SKILL.md", "README.md", "LICENSE"],
   "engines": { "node": ">=24" },
   "scripts": { "test": "node --test" }
 }

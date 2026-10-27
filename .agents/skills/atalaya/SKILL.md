@@ -59,6 +59,8 @@ Keep the config's compact style (one line per agent, per log, per `after` comman
 
 **Several machines.** Each computer has a label, `ATALAYA_MACHINE` in its `.env` (`atalaya paths` prints it). `daily` exports this machine's day to `activity/<label>/<day>.json` and imports the other machines' files, so they must share the atalaya repo: `"before": ["git pull -q --rebase --autostash"]` and the git push `after` command (with `activity`) on every machine. Per-machine differences go in `machines.<label>` (merged over the config; `git` and `agents` key by key); a machine that only feeds the logbook gets `"logs": []`. A new machine: clone the repo and run `atalaya init` inside it, which keeps `config.json`. Renaming a label leaves old rows under the old name, so choose it before the first `daily`.
 
+**Stale projects.** For dead or forgotten projects use the `atalaya-stale` skill (`atalaya stale`, thresholds in `stale.idle` / `stale.window`).
+
 **Agent reports.** `atalaya report "<what got finished>" --source <agent>` stores one line tied to the current folder. If the user wants agents to report on their own, propose the snippet from README "Agent reports" for their global `CLAUDE.md`/`AGENTS.md`; that file is theirs, so ask before editing it.
 
 ## Answering "what did I do?"

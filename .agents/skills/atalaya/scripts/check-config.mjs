@@ -36,6 +36,9 @@ if (typeof cfg.language !== 'string' || !cfg.language.trim()) errors.push('langu
 for (const label of Object.keys(JSON.parse(readFileSync(file, 'utf8')).machines ?? {})) {
   if (!/^[a-z0-9_-]+$/.test(label)) errors.push(`machines: "${label}" is not a valid label (a-z, 0-9, - and _); it must match ATALAYA_MACHINE`);
 }
+for (const key of ['idle', 'window']) if (!/^\d+[mhd]$/.test(cfg.stale[key])) errors.push(`stale.${key}: "${cfg.stale[key]}" (use e.g. 30d)`);
+const days = (v) => Number.parseInt(v) * { m: 1 / 1440, h: 1 / 24, d: 1 }[v.at(-1)];
+if (days(cfg.stale.idle) >= days(cfg.stale.window)) errors.push('stale: idle must be shorter than window');
 for (const key of ['before', 'after']) if (!Array.isArray(cfg[key])) errors.push(`${key}: must be a list of shell commands`);
 
 const names = new Set();
