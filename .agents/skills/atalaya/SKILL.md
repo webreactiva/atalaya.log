@@ -10,7 +10,7 @@ atalaya has two halves, and keeping them apart is the whole design:
 - **Deterministic:** `collect` reads git and the agents' session files, strips secrets and upserts into `atalaya.db` (SQLite). Commits are keyed by hash, sessions by (agent, id, day). Re-collecting never duplicates; nothing is lost when an agent prunes its own logs.
 - **Agent-driven:** `log` sends a prompt plus the day's data (exactly what `show` prints) to an agent CLI in headless mode and saves its Markdown to `logs/<name>/<date>.md`. `discover` asks an agent where it stores its sessions.
 
-Everything the user owns lives in **their atalaya folder**, created by `atalaya init` (often `~/atalaya_log`). Find it with `cat ~/.config/atalaya_log/home`, or `$ATALAYA_HOME` if set. Paths below are relative to it. The installed package (code and bundled prompts) is not the user's: don't edit it.
+Everything the user owns lives in **their atalaya folder**, created by `atalaya init` (often `~/scripts/atalaya`). Find it with `cat ~/.config/atalaya/home`, or `$ATALAYA_HOME` if set. Paths below are relative to it. The installed package (code and bundled prompts) is not the user's: don't edit it.
 
 ## Files you will touch
 
@@ -34,7 +34,7 @@ node <this skill's folder>/scripts/check-config.mjs
 It validates JSON, logs vs. prompts vs. agents, bot command names, `ATALAYA_LOG_<NAME>` used in `after` against the logs written in `daily`, and refuses secrets in the config. Fix every ✗; read every ⚠ to the user. Then verify the effect with the cheapest real command: `atalaya paths` for sources, `atalaya show --date yesterday | grep '^## '` for folders, aliases and hide. If the bot is running (`tmux has-session -t atalaya-bot`), restart it so it picks up the change:
 
 ```bash
-tmux kill-session -t atalaya-bot; tmux new-session -d -s atalaya-bot "atalaya bot 2>&1 | tee -a $(cat ~/.config/atalaya_log/home)/bot.log"
+tmux kill-session -t atalaya-bot; tmux new-session -d -s atalaya-bot "atalaya bot 2>&1 | tee -a $(cat ~/.config/atalaya/home)/bot.log"
 ```
 
 Keep the config's compact style (one line per agent, per log, per `after` command) when you edit it; it is meant to be read by a person.

@@ -8,6 +8,8 @@ A daily logbook of everything you did, per project and per day. It reads your gi
 
 Secret tokens, passwords, keys and credential URLs are redacted before anything is stored, sent to an agent or written to a log. File contents and tool output are never read, only your commits and the messages you typed.
 
+**Naming:** the project, the npm package and the repo are `atalaya.log`; everything you type or that lands on disk is just `atalaya`: the command, your folder (`~/scripts/atalaya`), `~/.config/atalaya`, `atalaya.db`, the skill.
+
 Logs are written in the language you set in `config.json` (`"language": "Spanish"`, `"French"`…); `init` picks it from your system locale.
 
 ## Requirements
@@ -23,23 +25,23 @@ Logs are written in the language you set in `config.json` (`"language": "Spanish
 **1. Install the CLI**
 
 ```bash
-npm install -g atalaya.log
+npm install -g github:webreactiva/atalaya.log
 atalaya help
 ```
 
-There are no dependencies. To run it from a clone instead: `git clone <this repo> && cd atalaya.log && npm link`.
+There are no dependencies. To run it from a clone instead: `git clone git@github.com:webreactiva/atalaya.log.git atalaya && cd atalaya && npm link`.
 
-**2. Create your atalaya folder.** Run `init` in the folder where you want your logs to live; it becomes your atalaya folder (like `git init`). for example `~/scripts/atalaya_log`:
+**2. Create your atalaya folder.** Run `init` in the folder where you want your logs to live; it becomes your atalaya folder (like `git init`). for example `~/scripts/atalaya`:
 
 ```bash
-mkdir -p ~/scripts/atalaya_log && cd ~/scripts/atalaya_log
-atalaya init                       # or: atalaya init ~/scripts/atalaya_log --roots ~/code,~/work
+mkdir -p ~/scripts/atalaya && cd ~/scripts/atalaya
+atalaya init                       # or: atalaya init ~/scripts/atalaya --roots ~/code,~/work
 ```
 
 If the folder already has a `config.json` (a clone of your atalaya repo), `init` keeps it and sets up everything else. `init` detects which agents you have, picks one to write the logs and the language from your locale, guesses your code folders, and creates:
 
 ```
-~/scripts/atalaya_log/
+~/scripts/atalaya/
 ├── config.json     # everything atalaya does
 ├── .env            # secrets for Telegram, email… (chmod 600, git-ignored)
 ├── prompts/        # one prompt per log; edit them freely
@@ -52,7 +54,7 @@ If the folder already has a `config.json` (a clone of your atalaya repo), `init`
 
 **The folder is made to be versioned without leaking anything.** `init` runs `git init` (unless the folder is already inside another repo, which it leaves alone) and installs a `pre-commit` hook that runs `atalaya guard`. The guard refuses any commit that stages `.env`, the database, or a file in which the redactor finds a secret, even if you forced it past `.gitignore` with `git add -f`. If you already had a `pre-commit` hook, it is kept and `init` tells you to add `atalaya guard` to it.
 
-It also records the folder in `~/.config/atalaya_log/home`, so `atalaya` finds it from anywhere: cron, the bot, or an agent running `atalaya report` inside another project. To use a different folder for one command, pass `--home <dir>` or set `ATALAYA_HOME`. Running `init` again elsewhere moves the pointer to the new folder.
+It also records the folder in `~/.config/atalaya/home`, so `atalaya` finds it from anywhere: cron, the bot, or an agent running `atalaya report` inside another project. To use a different folder for one command, pass `--home <dir>` or set `ATALAYA_HOME`. Running `init` again elsewhere moves the pointer to the new folder.
 
 **3. Tell it what to read.** Open `config.json` and check `git.roots` (the folders searched for repos, up to `maxDepth` levels deep) and `sources` (the agents whose sessions are read):
 
@@ -86,7 +88,7 @@ crontab -e
 
 ```cron
 PATH=/Users/you/.nvm/versions/node/v24.11.0/bin:/Users/you/.local/bin:/usr/local/bin:/usr/bin:/bin
-10 0 * * * atalaya daily --date yesterday >> $HOME/scripts/atalaya_log/cron.log 2>&1
+10 0 * * * atalaya daily --date yesterday >> $HOME/scripts/atalaya/cron.log 2>&1
 ```
 
 Check `cron.log` the next morning. On macOS, an agent that keeps its login in the Keychain may fail under cron; if so, run it from a `launchd` agent instead.
@@ -127,7 +129,7 @@ Commands in `after` run in order, from your atalaya folder, once the logs are wr
 | Variable | Value |
 |---|---|
 | `ATALAYA_DATE` | The day, `YYYY-MM-DD` |
-| `ATALAYA_DATA_DIR` | Your atalaya folder, e.g. `/Users/you/scripts/atalaya_log` |
+| `ATALAYA_DATA_DIR` | Your atalaya folder, e.g. `/Users/you/scripts/atalaya` |
 | `ATALAYA_LOGS` | The log files just written, one path per line, in the order of `logs` |
 | `ATALAYA_LOG_<NAME>` | The file of one log, by its name in uppercase: `ATALAYA_LOG_DAILY`, `ATALAYA_LOG_TLDR`… (empty when that log wasn't written) |
 
@@ -184,7 +186,7 @@ It only answers `TELEGRAM_CHAT_ID`; messages sent while it was stopped are dropp
 Without `bot.commands`, there is one command per log, named after it. Keep it running in tmux or as a `launchd`/`systemd` service:
 
 ```bash
-tmux new-session -d -s atalaya-bot 'atalaya bot 2>&1 | tee -a ~/scripts/atalaya_log/bot.log'
+tmux new-session -d -s atalaya-bot 'atalaya bot 2>&1 | tee -a ~/scripts/atalaya/bot.log'
 ```
 
 ### Email
@@ -221,7 +223,7 @@ Your atalaya folder is already a repo (see [Install](#install)): config, prompts
 
 1. Create an empty private repo on GitHub/GitLab, then:
    ```bash
-   cd ~/scripts/atalaya_log
+   cd ~/scripts/atalaya
    git add .gitignore config.json prompts logs activity && git commit -m "First logs"
    git remote add origin git@github.com:you/my-logs.git
    git push -u origin HEAD
@@ -249,7 +251,7 @@ Setup, using the git push above on every machine:
 
 1. On the new machine, install atalaya and clone your atalaya repo, then run `init` inside the clone. It keeps the `config.json` it finds and sets up the rest: `.env` with this machine's label, the pre-commit guard, the pointer, the cron line.
    ```bash
-   git clone git@github.com:you/my-logs.git ~/scripts/atalaya_log && cd ~/scripts/atalaya_log
+   git clone git@github.com:you/my-logs.git ~/scripts/atalaya && cd ~/scripts/atalaya
    atalaya init      # then edit ATALAYA_MACHINE in .env if you want another label
    ```
 2. Pull before reading, so the other machines' files are there:
