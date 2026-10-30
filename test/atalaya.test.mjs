@@ -11,7 +11,7 @@ import { parseSince, dayRange, activeTime, duration } from '../lib/time.mjs';
 import { parseLog } from '../lib/git.mjs';
 import { patchFiles, READERS } from '../lib/sessions.mjs';
 import { existingPath, isOwnSession, discoverPrompt } from '../lib/agents.mjs';
-import { openStore, toMarkdown, toStaleMarkdown } from '../lib/store.mjs';
+import { openStore, toDayJson, toMarkdown, toStaleJson, toStaleMarkdown, toState } from '../lib/store.mjs';
 import { parseCommand, chunks } from '../lib/telegram.mjs';
 import { findHome, promptPath } from '../lib/config.mjs';
 import { guard, init } from '../lib/init.mjs';
@@ -177,6 +177,39 @@ test('stale lists projects active in the window but idle lately', async () => {
   assert.match(md, /^\| \/r\/old \| 2026-08-03 \| 85 days \| 2 \| 0 \|$/m);
   assert.doesNotMatch(md, /\/r\/live/); // its agent session in a subfolder keeps it alive
   assert.match(toStaleMarkdown(projects, { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' }, { hide: ['/r/old'] }), /Nothing stale/);
+  store.close();
+});
+
+test('JSON: day, stale and state carry counts and paths, never prompts, in stable bytes', async () => {
+  const store = await openStore(':memory:', 'laptop');
+  const commit = (hash, date) => ({ hash: hash.repeat(40), short: hash.repeat(7), date, author: 'D', ref: 'main', subject: 's', files: 1, insertions: 1, deletions: 0 });
+  const session = (id, day, project) => ({ tool: 'claude', id, day, project, title: 't', model: 'm', start: `${day}T08:00:00Z`, end: `${day}T09:00:00Z`, toolCalls: 2, prompts: ['secret plan'], files: ['/r/x.js'] });
+  store.saveGit({ repos: ['/r/old', '/r/live', '/r/hot', '/r/hidden'], projects: [
+    { repo: '/r/old', branch: 'main', commits: [commit('a', '2026-08-03T10:00:00Z')], pending: [] },
+    { repo: '/r/hot', branch: 'main', commits: [commit('b', '2026-10-27T10:00:00Z'), commit('c', '2026-10-22T10:00:00Z'), commit('d', '2026-10-29T10:00:00Z')], pending: [] },
+    { repo: '/r/hidden', branch: 'main', commits: [commit('e', '2026-10-27T11:00:00Z')], pending: [] },
+  ] }, { from: 0, to: 0 }, redact);
+  store.saveSessions([session('s1', '2026-10-20', '/r/live/sub'), session('s2', '2026-10-27', '/r/hot')], redact);
+  store.importDay('laptop', { day: '2026-10-28', pending: [{ day: '2026-10-28', repo: '/r/hot', file: 'a.js', status: 'M' }] }, redact);
+
+  const state = toState(store, '2026-10-27', { idle: '30d', window: '90d' }, { hide: ['/r/hidden'] }, [{ name: 'daily', file: 'logs/daily/2026-10-27.md' }]);
+  assert.equal(JSON.stringify(toState(store, '2026-10-27', { idle: '30d', window: '90d' }, { hide: ['/r/hidden'] }, [{ name: 'daily', file: 'logs/daily/2026-10-27.md' }])), JSON.stringify(state));
+  assert.equal(state.schemaVersion, 1);
+  assert.deepEqual(state.summary, { active: 1, idle: 1, stale: 1 });
+  assert.deepEqual(state.projects.map((p) => [p.path, p.status, p.lastActivity, p.idleDays]), [['/r/hot', 'active', '2026-10-27', 0], ['/r/live', 'idle', '2026-10-20', 7], ['/r/old', 'stale', '2026-08-03', 85]]);
+  const hot = state.projects[0];
+  assert.deepEqual(hot.counts['1d'], { commits: 1, sessions: 1, reports: 0, activeMinutes: 125 }); // 08:00 → 10:00 + 5
+  assert.equal(hot.counts['7d'].commits, 2); // the 10-29 commit is after the day
+  assert.deepEqual(hot.pending, [{ file: 'a.js', status: 'M', machine: 'laptop' }]); // the snapshot taken just after midnight
+  assert.doesNotMatch(JSON.stringify(state), /secret plan|hidden/);
+
+  const day = toDayJson('2026-10-27', store.day('2026-10-27'));
+  assert.deepEqual(day.projects.map((p) => p.path), ['/r/hidden', '/r/hot']);
+  assert.deepEqual(day.projects[1].sessions[0], { tool: 'claude', id: 's2', title: 't', model: 'm', folder: '/r/hot', start: '2026-10-27T08:00:00Z', end: '2026-10-27T09:00:00Z', toolCalls: 2, prompts: 1, editedFiles: 1 });
+  assert.doesNotMatch(JSON.stringify(day), /secret plan/);
+
+  const stale = toStaleJson(store.activitySince('2026-07-29'), { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' });
+  assert.deepEqual(stale.stale, [{ path: '/r/old', name: '/r/old', lastActivity: '2026-08-03', idleDays: 85, commits: 1, sessionDays: 0, machines: ['laptop'] }]);
   store.close();
 });
 

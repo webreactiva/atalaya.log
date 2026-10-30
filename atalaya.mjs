@@ -14,7 +14,7 @@ import { guard, init, installSkill } from './lib/init.mjs';
 import { collectGit } from './lib/git.mjs';
 import { READERS, DEFAULT_PATHS } from './lib/sessions.mjs';
 import { askHeadless, discover, isOwnSession, MARKER } from './lib/agents.mjs';
-import { openStore, toMarkdown, toStaleMarkdown } from './lib/store.mjs';
+import { openStore, SCHEMA_VERSION, toDayJson, toMarkdown, toStaleJson, toStaleMarkdown, toState } from './lib/store.mjs';
 import { redact } from './lib/redact.mjs';
 import { parseCommand, telegram } from './lib/telegram.mjs';
 import { dayRange, localDate, parseSince } from './lib/time.mjs';
@@ -23,11 +23,11 @@ const HELP = `atalaya <command> [options]
 
   init      [dir] [--roots ~/a,~/b] [--force]           Create an atalaya folder (default: the current one)
   collect   [--since 24h | --date YYYY-MM-DD] [--fetch]  Read git and agent sessions into the store
-  show      [--date today | --since 7d] [--project txt]  Print what is stored, as Markdown (what the agent receives)
+  show      [--date today | --since 7d] [--project txt]  Print what is stored, as Markdown (what the agent receives) [--json]
   log       [--date today] [--name log]                  An agent writes the logs configured in "logs"
-  daily     [--date today] [--no-after]                  before + collect + share + log + after
+  daily     [--date today] [--no-after]                  before + collect + share + state + log + after
   share     [--date today]                               Export this machine's day to activity/ and import the others'
-  stale     [--idle 30d] [--window 90d] [--no-collect]   Projects active in the window but untouched lately
+  stale     [--idle 30d] [--window 90d] [--no-collect]   Projects active in the window but untouched lately [--json]
   report    "what got finished" [--source agent]         For agents: record finished work in the current folder
   bot                                                    Telegram bot: /daily, /tldr… [today|yesterday|YYYY-MM-DD]
   discover  [agent ...] [--no-tmux]                      Ask each agent where it stores its sessions
@@ -51,6 +51,7 @@ const opts = {
   'no-tmux': { type: 'boolean' },
   'no-after': { type: 'boolean' },
   'no-collect': { type: 'boolean' },
+  json: { type: 'boolean' },
   idle: { type: 'string' },
   window: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
@@ -102,6 +103,22 @@ function exportDays(cfg, store, range, project) {
     .days(localDate(range.from), localDate(range.to - 1))
     .map((day) => toMarkdown(day, store.day(day, project), cfg.view))
     .join('\n');
+}
+
+// ---------- state ----------
+// state/days/<day>.json and state/latest.json: every project's state as data, for dashboards and other systems.
+// latest.json only moves forward, so redoing an old day doesn't replace it
+async function writeState(cfg, store, day) {
+  const dir = join(cfg.dataDir, 'state');
+  const logs = cfg.logs.map((l) => ({ name: l.name, file: `logs/${l.name}/${day}.md` })).filter((l) => existsSync(join(cfg.dataDir, l.file)));
+  const json = JSON.stringify(toState(store, day, cfg.stale, cfg.view, logs), null, 1) + '\n';
+  await mkdir(join(dir, 'days'), { recursive: true });
+  const file = join(dir, 'days', `${day}.json`);
+  await writeFile(file, json);
+  const newest = (await readdir(join(dir, 'days'))).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().pop();
+  if (newest === `${day}.json`) await writeFile(join(dir, 'latest.json'), json);
+  console.error(`state: ${file}`);
+  return file;
 }
 
 // ---------- several machines ----------
@@ -245,8 +262,14 @@ async function main() {
     switch (command) {
       case 'collect':
         return await collect(cfg, store, rangeFrom(values), values);
-      case 'show':
-        return console.log(exportDays(cfg, store, rangeFrom(values, values.project ? '7d' : '24h'), values.project) || '_No recorded activity._');
+      case 'show': {
+        const range = rangeFrom(values, values.project ? '7d' : '24h');
+        if (values.json) {
+          const days = store.days(localDate(range.from), localDate(range.to - 1)).map((day) => toDayJson(day, store.day(day, values.project), cfg.view));
+          return console.log(JSON.stringify({ schemaVersion: SCHEMA_VERSION, days }, null, 1));
+        }
+        return console.log(exportDays(cfg, store, range, values.project) || '_No recorded activity._');
+      }
       case 'report': {
         const summary = positionals.join(' ').trim();
         if (!summary) throw new Error('Usage: atalaya report "what got finished and how it ended" [--source claude]');
@@ -287,7 +310,8 @@ async function main() {
         if (idleFrom <= from) throw new Error(`stale: idle (${idle}) must be shorter than window (${window})`);
         if (!values['no-collect']) await collect(cfg, store, { from, to: now }, values); // the whole window, so no project looks stale for lack of data
         const today = localDate(now);
-        return console.log(toStaleMarkdown(store.activitySince(localDate(from)), { today, idleSince: localDate(idleFrom), idle, window }, cfg.view));
+        const args = [store.activitySince(localDate(from)), { today, idleSince: localDate(idleFrom), idle, window }, cfg.view];
+        return console.log(values.json ? JSON.stringify(toStaleJson(...args), null, 1) : toStaleMarkdown(...args));
       }
       case 'share':
         return await share(cfg, store, dayRange(values.date ?? 'today').date);
@@ -297,10 +321,12 @@ async function main() {
         await runCommands(cfg, 'before', env); // e.g. git pull, to get the other machines' activity
         await collect(cfg, store, range, values);
         await share(cfg, store, range.date);
+        await writeState(cfg, store, range.date); // before the logs, so it exists even if the agent fails
         const logs = cfg.logs.length ? await writeLogs(cfg, store, range.date) : [];
+        const state = logs.length ? await writeState(cfg, store, range.date) : join(cfg.dataDir, 'state', 'days', `${range.date}.json`); // again, now linking the logs
         // ATALAYA_LOGS in config order, and ATALAYA_LOG_<NAME> to pick one (e.g. the tldr as a text message)
         const byName = Object.fromEntries(logs.map((l) => [`ATALAYA_LOG_${l.name.toUpperCase().replace(/\W/g, '_')}`, l.file]));
-        if (!values['no-after']) await runCommands(cfg, 'after', { ...env, ATALAYA_LOGS: logs.map((l) => l.file).join('\n'), ...byName });
+        if (!values['no-after']) await runCommands(cfg, 'after', { ...env, ATALAYA_STATE_FILE: state, ATALAYA_LOGS: logs.map((l) => l.file).join('\n'), ...byName });
         return;
       }
       default:
