@@ -409,7 +409,9 @@ atalaya stale --idle 60d --window 180d
 atalaya stale --no-collect             # skip the collect over the whole window (about 40 s with 190 repos)
 ```
 
-Set the defaults with `"stale": { "idle": "30d", "window": "90d" }`. Projects with nothing in the whole window are not listed (they were dead before it started; widen `window`), and temp folders and `hide` are left out. The `atalaya-stale` skill (installed with `atalaya skill install`) lets an agent run it, look into each project and propose what to archive, close or pick back up.
+Set the defaults with `"stale": { "idle": "30d", "window": "90d" }`. Projects with nothing in the whole window are not listed (they were dead before it started; widen `window`), and temp folders and `hide` are left out.
+
+A project is a repo: a session in a subfolder counts for its repo. Folders that aren't repos join the top-most folder above them with activity of their own, unless that folder holds repos or is your home (`~/live/skills/a` is part of `~/live/skills`, but `~/code/sketch` isn't part of `~/code`). Everything in `/tmp`, `/private/tmp` or `/var/folders` is one project per root: agents' experiments show up together in the logs, each session with its folder, and never as stale. The `atalaya-stale` skill (installed with `atalaya skill install`) lets an agent run it, look into each project and propose what to archive, close or pick back up.
 
 ## JSON output
 
