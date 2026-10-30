@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { redact } from '../lib/redact.mjs';
 import { parseSince, dayRange, activeTime, duration } from '../lib/time.mjs';
@@ -177,6 +177,27 @@ test('stale lists projects active in the window but idle lately', async () => {
   assert.match(md, /^\| \/r\/old \| 2026-08-03 \| 85 days \| 2 \| 0 \|$/m);
   assert.doesNotMatch(md, /\/r\/live/); // its agent session in a subfolder keeps it alive
   assert.match(toStaleMarkdown(projects, { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' }, { hide: ['/r/old'] }), /Nothing stale/);
+  store.close();
+});
+
+test('temp folders are one project left out of stale, and non-repo subfolders join their parent', async () => {
+  const store = await openStore(':memory:', 'laptop');
+  store.saveGit({ repos: ['/code/api'], projects: [] }, { from: 0, to: 0 }, redact);
+  const session = (id, project) => ({ tool: 'claude', id, day: '2026-08-10', project, title: id, model: 'm', start: '2026-08-10T08:00:00Z', end: '2026-08-10T09:00:00Z', toolCalls: 1, prompts: [], files: [] });
+  store.saveSessions([
+    session('tmp-root', '/private/tmp'), session('tmp-sub', '/private/tmp/exp/1'), session('folders', '/var/folders/xy/T/run'),
+    session('parent', '/live/skills'), session('child', '/live/skills/a'), session('grandchild', '/live/skills/b/c'),
+    session('workspace', '/code'), session('loose', '/code/sketch'), session('home', homedir()), session('in-home', join(homedir(), 'notes')),
+  ], redact);
+  const projects = store.activitySince('2026-07-29');
+  assert.deepEqual(projects.map((p) => [p.project, p.sessions]), [
+    ['/code', 1], ['/code/sketch', 1], // /code holds a repo: a workspace, not a project that swallows its folders
+    ['/live/skills', 3], ['/private/tmp', 2], ['/var/folders', 1],
+    [homedir(), 1], [join(homedir(), 'notes'), 1], // home never swallows anything
+  ].sort((a, b) => a[0].localeCompare(b[0])));
+  const md = toStaleMarkdown(projects, { today: '2026-10-27', idleSince: '2026-09-27', idle: '30d', window: '90d' });
+  assert.doesNotMatch(md, /tmp|var\/folders/);
+  assert.match(toMarkdown('2026-08-10', store.day('2026-08-10')), /^## \/live\/skills$[\s\S]*Folder: `\/live\/skills\/b\/c`/m); // the log still says where
   store.close();
 });
 
