@@ -47,6 +47,7 @@ If the folder already has a `config.json` (a clone of your atalaya repo), `init`
 ├── prompts/        # one prompt per log; edit them freely
 ├── logs/           # the logs, one folder per log: logs/daily/2026-10-23.md
 ├── activity/       # each machine's recorded day, to share it (see Several machines)
+├── state/          # every project's state as JSON, written by daily (see JSON output)
 ├── .gitignore      # always written (or completed): .env, atalaya.db*, workdir/, *.log
 ├── .git/           # the folder is its own repo, with a pre-commit secrets guard
 └── atalaya.db      # the store (created on the first collect)
@@ -130,6 +131,7 @@ Commands in `after` run in order, from your atalaya folder, once the logs are wr
 |---|---|
 | `ATALAYA_DATE` | The day, `YYYY-MM-DD` |
 | `ATALAYA_DATA_DIR` | Your atalaya folder, e.g. `/Users/you/scripts/atalaya` |
+| `ATALAYA_STATE_FILE` | The day's state, `state/days/<date>.json` (see [JSON output](#json-output)) |
 | `ATALAYA_LOGS` | The log files just written, one path per line, in the order of `logs` |
 | `ATALAYA_LOG_<NAME>` | The file of one log, by its name in uppercase: `ATALAYA_LOG_DAILY`, `ATALAYA_LOG_TLDR`… (empty when that log wasn't written) |
 
@@ -272,12 +274,12 @@ A machine that is off at night simply shares that day on its next `daily` run; t
 
 ```bash
 atalaya collect [--since 24h | --date YYYY-MM-DD] [--fetch]   # read git + sessions into the store
-atalaya show [--date today | --since 7d] [--project text]     # print stored data as Markdown
+atalaya show [--date today | --since 7d] [--project text]     # print stored data as Markdown (--json for data)
 atalaya discover [agent ...] [--no-tmux]                      # ask agents where their sessions live
 atalaya log [--date today] [--name log]                       # an agent writes the configured logs
-atalaya daily [--date today] [--no-after]                     # before + collect + share + log + after
+atalaya daily [--date today] [--no-after]                     # before + collect + share + state + log + after
 atalaya share [--date today]                                  # export this machine's day, import the others'
-atalaya stale [--idle 30d] [--window 90d] [--no-collect]      # projects active in the window but untouched lately
+atalaya stale [--idle 30d] [--window 90d] [--no-collect]      # projects active in the window but untouched lately (--json)
 atalaya report "what got finished" [--source agent]           # an agent records finished work
 atalaya bot                                                   # Telegram bot: /tldr, /roast_me… [today|yesterday|YYYY-MM-DD]
 atalaya paths                                                 # where each source is read from
@@ -408,6 +410,39 @@ atalaya stale --no-collect             # skip the collect over the whole window 
 ```
 
 Set the defaults with `"stale": { "idle": "30d", "window": "90d" }`. Projects with nothing in the whole window are not listed (they were dead before it started; widen `window`), and temp folders and `hide` are left out. The `atalaya-stale` skill (installed with `atalaya skill install`) lets an agent run it, look into each project and propose what to archive, close or pick back up.
+
+## JSON output
+
+The logs are for people. For a dashboard, a webhook or any other system, atalaya gives the same data as JSON, built from the store without any agent:
+
+```bash
+atalaya show --date yesterday --json   # the day per project: commits, sessions, time, uncommitted files
+atalaya stale --json                   # the stale table as data
+```
+
+`daily` also writes `state/days/<date>.json` and `state/latest.json` (only if it is the newest day), before the logs so they exist even if the agent fails, and again after them to link the logs written. `after` commands get the path in `ATALAYA_STATE_FILE`, e.g. `"curl -sf -X POST -H 'Content-Type: application/json' --data @\"$ATALAYA_STATE_FILE\" \"$WEBHOOK_URL\""`.
+
+```json
+{
+ "schemaVersion": 1,
+ "day": "2026-10-30",
+ "thresholds": { "idle": "30d", "window": "90d" },
+ "machines": ["laptop"],
+ "logs": [{ "name": "daily", "file": "logs/daily/2026-10-30.md" }],
+ "summary": { "active": 21, "idle": 123, "stale": 34 },
+ "projects": [{
+  "path": "/Users/you/code/api", "name": "~/code/api", "machines": ["laptop"],
+  "lastActivity": "2026-10-30", "idleDays": 0, "status": "active",
+  "counts": { "1d": { "commits": 15, "sessions": 1, "reports": 0, "activeMinutes": 295 }, "7d": { … }, "30d": { … } },
+  "pending": [{ "file": "README.md", "status": "M", "machine": "laptop" }]
+ }]
+}
+```
+
+- `projects`: every project with activity in `stale.window` up to that day, sorted by path. `status` is `active` (activity in the last 7 days), `idle` (within `stale.idle`) or `stale` (older). `counts` are per period ending that day; `sessions` are session-days, like everywhere else.
+- `pending` is the latest snapshot of uncommitted files up to the next morning, which is when the nightly run takes it.
+- No prompts, edited file names or report text ever go into JSON: titles, counts, paths and timestamps only, after redaction and `hide`. `show --json` adds commit subjects, the same ones the logs cite.
+- Same store, same bytes: an unchanged day writes an identical file, so it diffs cleanly in git. Fields may be added within a `schemaVersion`; anything else bumps it.
 
 ## Estimated time per project
 
